@@ -128,3 +128,19 @@ void vga_init()
   pio_enable_sm_mask_in_sync(pio0, ((1u << hSyncState.sm) | (1u << vSyncState.sm) | (1u << rgbState.sm)));
   dma_start_channel_mask((1u << 1));
 }
+
+void vga_clear()
+{
+  for (int i = 0; i < FB_SIZE; i++)
+  {
+    framebuffer[i] = 0;
+  }
+}
+
+uint16_t vga_create_color(uint8_t red, uint8_t green, uint8_t blue)
+{
+  uint16_t result = 0;
+  result |= (red >> 3);
+  result |= (green >> 3) << 7;
+  result |= (blue >> 3) << 12;
+}
