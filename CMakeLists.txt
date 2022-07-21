@@ -14,6 +14,11 @@ add_executable(picogame
 picogame.c
 )
 
+target_sources(picogame PRIVATE
+${CMAKE_CURRENT_LIST_DIR}/picogame.c
+${CMAKE_CURRENT_LIST_DIR}/vga.c
+)
+
 add_compile_options(-Wall -Wextra -pedantic -Werror)
 
 pico_generate_pio_header(picogame ${CMAKE_CURRENT_LIST_DIR}/hsync.pio)
