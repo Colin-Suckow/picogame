@@ -1,0 +1,36 @@
+.program rgb
+
+pull block
+mov y, osr
+.wrap_target
+mov osr, isr
+out pins, 32
+mov x, y
+
+wait 1 irq 1 ;[31]
+
+colorout:
+  pull block
+  ;out pins, 16 ;Get rid of first empty 16 bits
+  out pins, 16 [16]
+  jmp x-- colorout
+.wrap
+  
+% c-sdk {
+static inline void rgb_program_init(PIO pio, uint sm, uint offset) {
+	pio_sm_config c = rgb_program_get_default_config(offset);
+  sm_config_set_out_pins(&c, 0, 16);
+
+  for (int i = 0; i < 16; i++)
+  {
+    if (i == 5) continue;
+    pio_gpio_init(pio, i);
+  }
+
+  pio_sm_set_consecutive_pindirs(pio, sm, 0, 5, true);
+  pio_sm_set_consecutive_pindirs(pio, sm, 6, 10, true);
+
+	pio_sm_init(pio, sm, offset, &c);
+	//pio_sm_set_enabled(pio, sm, true);
+}
+%}

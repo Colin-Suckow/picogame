@@ -1,0 +1,47 @@
+.program vsync
+.side_set 1 opt
+
+pull block
+.wrap_target
+; active
+mov x, osr
+active:
+  wait 1 irq 0
+  irq 1
+  jmp x-- active
+
+; front porch
+set y, 9
+frontporch:
+  wait 1 irq 0
+  jmp y-- frontporch
+
+; sync
+set pins, 0
+wait 1 irq 0
+wait 1 irq 0
+
+; back porch
+set y, 31
+backporch:
+  wait 1 irq 0 side 1
+    jmp y-- backporch
+.wrap
+  
+% c-sdk {
+static inline void vsync_program_init(PIO pio, uint sm, uint offset, uint pin) {
+	pio_sm_config c = vsync_program_get_default_config(offset);
+  sm_config_set_set_pins(&c, pin, 1);
+  sm_config_set_sideset_pins(&c, pin);
+
+  // Set clock division (div by 10 for 25 MHz state machine)
+  sm_config_set_clkdiv(&c, 10);
+
+  pio_gpio_init(pio, pin);
+
+  pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+	pio_sm_init(pio, sm, offset, &c);
+	//pio_sm_set_enabled(pio, sm, true);
+}
+%}

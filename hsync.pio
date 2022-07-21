@@ -1,0 +1,38 @@
+.program hsync
+
+pull block
+.wrap_target
+; active + frontporch
+mov x, osr
+activeporch:
+  jmp x-- activeporch
+
+; sync pulse
+pulse:
+  set pins, 0 [31]
+  set pins, 0 [31]
+  set pins, 0 [31]
+
+; back porch
+backporch:
+  set pins, 1 [31]
+  set pins, 1 [12]
+  irq 0 [1]
+.wrap
+  
+% c-sdk {
+static inline void hsync_program_init(PIO pio, uint sm, uint offset, uint pin) {
+	pio_sm_config c = hsync_program_get_default_config(offset);
+  sm_config_set_set_pins(&c, pin, 1);
+
+  // Set clock division (div by 10 for 25 MHz state machine)
+  sm_config_set_clkdiv(&c, 10) ;
+
+  pio_gpio_init(pio, pin);
+
+  pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+	pio_sm_init(pio, sm, offset, &c);
+	//pio_sm_set_enabled(pio, sm, true);
+}
+%}
