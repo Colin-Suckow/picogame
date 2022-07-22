@@ -20,6 +20,13 @@ void draw_box(int x, int y, int width, int height)
 
 float time = 0.0;
 
+void draw_func()
+{
+  time += 0.1;
+  vga_clear();
+  draw_box(FB_WIDTH / 2 + ( sinf(time) * 50) - 25, FB_HEIGHT / 2 + (cosf(time) * 50) - 25, 50, 50);
+}
+
 int main()
 {
   set_sys_clock_khz(250000, true);
@@ -29,10 +36,7 @@ int main()
 
   while (true)
   {
-    time += 0.1;
-    vga_clear();
-    draw_box(FB_WIDTH / 2 + ( sinf(time) * 50) - 25, FB_HEIGHT / 2 + (cosf(time) * 50) - 25, 50, 50);
-    sleep_ms(17);
+    vga_queue_draw(draw_func);
   }
 
   return 0;

@@ -20,6 +20,8 @@ struct control_block {uint32_t len; uint16_t *data;};
 
 struct control_block scanline_blocks[481];
 
+void (*queued_draw_function)();
+
 // PRIVATE
 
 void fill_scanline_blocks()
@@ -37,6 +39,19 @@ void frame_done_handler()
 {
   dma_channel_set_read_addr(1, &scanline_blocks[0], true);
   dma_hw->ints0 = 1u;
+}
+
+void vsync_handler()
+{
+  if (pio0_hw->irq & 2)
+  {
+    if (queued_draw_function != NULL)
+    {
+      queued_draw_function();
+      queued_draw_function = NULL;
+    }
+    hw_set_bits(&pio0->irq, 2u);
+  }
 }
 
 void init_pio_hsync(smState *state)
@@ -57,6 +72,12 @@ void init_pio_vsync(smState *state)
   uint sm = 1;
   vsync_program_init(pio, sm, offset, 17);
   pio_sm_put_blocking(pio, sm, 479); // Visible
+
+  //Set up irq
+  irq_set_exclusive_handler(PIO0_IRQ_0, vsync_handler);
+  irq_set_enabled(PIO0_IRQ_0, true);
+  pio0_hw->inte0 = PIO_IRQ0_INTE_SM1_BITS;
+
   state->pio = pio;
   state->sm = sm;
 }
@@ -143,4 +164,9 @@ uint16_t vga_create_color(uint8_t red, uint8_t green, uint8_t blue)
   result |= (red >> 3);
   result |= (green >> 3) << 7;
   result |= (blue >> 3) << 12;
+}
+
+void vga_queue_draw(void (*draw_function)())
+{
+  queued_draw_function = draw_function;
 }

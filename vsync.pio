@@ -7,9 +7,10 @@ pull block
 mov x, osr
 active:
   wait 1 irq 0
-  irq 1
+  irq 2
   jmp x-- active
 
+irq 1 ;Signal begin of vsync
 ; front porch
 set y, 9
 frontporch:
@@ -19,7 +20,8 @@ frontporch:
 ; sync
 set pins, 0
 wait 1 irq 0
-wait 1 irq 0
+;wait 1 irq 0 ; This wait needs to be commented out to fit in the vsync irq. Doing so halves
+              ; the sync period, but it still works with my display so it seems ok
 
 ; back porch
 set y, 31

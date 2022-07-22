@@ -7,11 +7,10 @@ mov osr, isr
 out pins, 32
 mov x, y
 
-wait 1 irq 1 ;[31]
+wait 1 irq 2 ;[31]
 
 colorout:
   pull block
-  ;out pins, 16 ;Get rid of first empty 16 bits
   out pins, 16 [16]
   jmp x-- colorout
 .wrap
