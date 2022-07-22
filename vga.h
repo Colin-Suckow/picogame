@@ -15,4 +15,5 @@ void vga_set_enable(bool enabled);
 void vga_clear();
 uint16_t vga_create_color(uint8_t red, uint8_t green, uint8_t blue);
 void vga_queue_draw(void (*draw_function)());
+void vga_draw_str(int x, int y, char *text);
 #endif

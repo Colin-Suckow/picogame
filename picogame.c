@@ -25,6 +25,8 @@ void draw_func()
   time += 0.1;
   vga_clear();
   draw_box(FB_WIDTH / 2 + ( sinf(time) * 50) - 25, FB_HEIGHT / 2 + (cosf(time) * 50) - 25, 50, 50);
+  vga_draw_str(0,0,"Hello world!");
+  vga_draw_str(0,13,"This is a test of text.~");
 }
 
 int main()

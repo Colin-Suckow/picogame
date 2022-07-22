@@ -1,4 +1,5 @@
 #include "vga.h"
+#include "font.h"
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 #include "hardware/dma.h"
@@ -132,7 +133,35 @@ void configure_dma(smState *rgbState)
   );
 }
 
+void draw_character(int x, int y, char *char_raster)
+{
+  for (int line = 0; line < FONT_CHAR_HEIGHT; line++)
+  {
+    for (int pixel = 0; pixel < FONT_CHAR_WIDTH; pixel++)
+    {
+      if ((char_raster[line] >> (FONT_CHAR_WIDTH - pixel)) & 1 == 1)
+      {
+        framebuffer[(y + (FONT_CHAR_HEIGHT - line)) * FB_WIDTH + (x + pixel)] = 0xFFFFFF;
+      }
+    }
+  }
+}
+
 // public
+
+void vga_draw_str(int x, int y, char *text)
+{
+  int char_offset = 0;
+
+  for (int i = 0; i < strlen(text); i++)
+  {
+    if (text[i] >= 32 && text[i] <= 126)
+    {
+      draw_character(x + char_offset, y, &font_rasters[text[i] - 32]);
+      char_offset += FONT_CHAR_WIDTH;
+    }
+  }
+}
 
 void vga_init()
 {
