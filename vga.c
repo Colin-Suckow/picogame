@@ -4,12 +4,19 @@
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 #include "pico/platform.h"
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "hsync.pio.h"
 #include "vsync.pio.h"
 #include "rgb.pio.h"
 
+#define DMA_DATA_CHANNEL 0
+#define DMA_CONTROL_CHANNEL 1
+
 uint16_t framebuffer[FB_SIZE] = {0};
+
 
 typedef struct
 {
@@ -89,47 +96,47 @@ void init_pio_rgb(smState *state)
   uint offset = pio_add_program(pio, &rgb_program);
   uint sm = 2;
   rgb_program_init(pio, sm, offset);
-  pio_sm_put_blocking(pio, sm, 319); // pixels to pull
+  pio_sm_put_blocking(pio, sm, 319); // pixels to pull for each scanline
   state->pio = pio;
   state->sm = sm;
 }
 
 void configure_dma(smState *rgbState)
 {
-  dma_channel_config config0 = dma_channel_get_default_config(0);
-  channel_config_set_transfer_data_size(&config0, DMA_SIZE_16);
-  channel_config_set_read_increment(&config0, true);
-  channel_config_set_write_increment(&config0, false);
-  channel_config_set_dreq(&config0, DREQ_PIO0_TX2);
-  channel_config_set_chain_to(&config0, 1);
-  channel_config_set_irq_quiet(&config0, true);
+  dma_channel_config data_config = dma_channel_get_default_config(DMA_DATA_CHANNEL);
+  channel_config_set_transfer_data_size(&data_config, DMA_SIZE_16);
+  channel_config_set_read_increment(&data_config, true);
+  channel_config_set_write_increment(&data_config, false);
+  channel_config_set_dreq(&data_config, DREQ_PIO0_TX2);
+  channel_config_set_chain_to(&data_config, DMA_CONTROL_CHANNEL);
+  channel_config_set_irq_quiet(&data_config, true);
 
   dma_channel_configure(
-      0,                       // Channel to be configured
-      &config0,                // The configuration we just created
-      &pio0->txf[rgbState->sm], // write address (RGB PIO TX FIFO)
-      NULL,            // The initial read address (pixel color array)
-      0,                 // Number of transfers; in this case each is one word.
-      false                    // Don't start immediately.
+      0,
+      &data_config,
+      &pio0->txf[rgbState->sm],
+      NULL,            // Read addr and len will be set by the control blocks
+      0,
+      false
   );
-  dma_channel_set_irq0_enabled(0, true);
+  dma_channel_set_irq0_enabled(DMA_DATA_CHANNEL, true);
   irq_set_exclusive_handler(DMA_IRQ_0, frame_done_handler);
   irq_set_enabled(DMA_IRQ_0, true);
 
-  // Channel One control channel
-  dma_channel_config c1 = dma_channel_get_default_config(1); // default configs
-  channel_config_set_transfer_data_size(&c1, DMA_SIZE_32);   // 32-bit txfers
-  channel_config_set_read_increment(&c1, true);            
-  channel_config_set_write_increment(&c1, true);
-  channel_config_set_ring(&c1, true, 3);            
+  // Channel One, Control channel
+  dma_channel_config control_config = dma_channel_get_default_config(DMA_CONTROL_CHANNEL);
+  channel_config_set_transfer_data_size(&control_config, DMA_SIZE_32);
+  channel_config_set_read_increment(&control_config, true);            
+  channel_config_set_write_increment(&control_config, true);
+  channel_config_set_ring(&control_config, true, 3);            
   
   dma_channel_configure(
-      1,                        // Channel to be configured
-      &c1,                      // The configuration we just created
-      &dma_hw->ch[0].al3_transfer_count, // Write address (channel 0 read address)
-      &scanline_blocks[0],             // Read address (POINTER TO AN ADDRESS)
-      2,                        // Number of transfers, in this case each is 1 word
-      false                     // Don't start immediately.
+      DMA_CONTROL_CHANNEL,
+      &control_config,
+      &dma_hw->ch[DMA_DATA_CHANNEL].al3_transfer_count, // Write to the data DMA channel registers
+      &scanline_blocks[0],                              // Start reading from the command block array
+      2,
+      false
   );
 }
 
@@ -141,7 +148,7 @@ void draw_character(int x, int y, char *char_raster)
     {
       if ((char_raster[line] >> (FONT_CHAR_WIDTH - pixel)) & 1 == 1)
       {
-        framebuffer[(y + (FONT_CHAR_HEIGHT - line)) * FB_WIDTH + (x + pixel)] = 0xFFFFFF;
+        framebuffer[(y + (FONT_CHAR_HEIGHT - line)) * FB_WIDTH + (x + pixel)] = 0xFFFF;
       }
     }
   }
@@ -149,15 +156,21 @@ void draw_character(int x, int y, char *char_raster)
 
 // public
 
-void vga_draw_str(int x, int y, char *text)
+void vga_draw_str(int x, int y, const char *text, ...)
 {
   int char_offset = 0;
+  char textBuf[64];
+  va_list arg;
+  va_start(arg, text);
 
-  for (int i = 0; i < strlen(text); i++)
+  vsprintf(textBuf, text, arg);
+  va_end(arg);
+
+  for (int i = 0; i < strlen(textBuf); i++)
   {
     if (text[i] >= 32 && text[i] <= 126)
     {
-      draw_character(x + char_offset, y, &font_rasters[text[i] - 32]);
+      draw_character(x + char_offset, y, (char *) &font_rasters[textBuf[i] - 32]);
       char_offset += FONT_CHAR_WIDTH;
     }
   }

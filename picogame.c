@@ -23,10 +23,14 @@ float time = 0.0;
 void draw_func()
 {
   time += 0.1;
+
+  int box_x = FB_WIDTH / 2 + ( sinf(time) * 50) - 25;
+  int box_y = FB_HEIGHT / 2 + (cosf(time) * 50) - 25;
+
   vga_clear();
-  draw_box(FB_WIDTH / 2 + ( sinf(time) * 50) - 25, FB_HEIGHT / 2 + (cosf(time) * 50) - 25, 50, 50);
-  vga_draw_str(0,0,"Hello world!");
-  vga_draw_str(0,13,"This is a test of text.~");
+  draw_box(box_x, box_y, 50, 50);
+  vga_draw_str(0,0,"x: %d", box_x);
+  vga_draw_str(0,13,"y: %d", box_y);
 }
 
 int main()
