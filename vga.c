@@ -1,5 +1,6 @@
 #include "vga.h"
 #include "font.h"
+#include "3d.h"
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 #include "hardware/dma.h"
@@ -7,6 +8,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
+#include <stdlib.h>
 
 #include "hsync.pio.h"
 #include "vsync.pio.h"
@@ -146,12 +149,24 @@ void draw_character(int x, int y, char *char_raster)
   {
     for (int pixel = 0; pixel < FONT_CHAR_WIDTH; pixel++)
     {
-      if ((char_raster[line] >> (FONT_CHAR_WIDTH - pixel)) & 1 == 1)
+      if ((char_raster[line] >> (pixel)) & 1 == 1)
       {
-        framebuffer[(y + (FONT_CHAR_HEIGHT - line)) * FB_WIDTH + (x + pixel)] = 0xFFFF;
+        framebuffer[(y + line) * FB_WIDTH + (x + pixel)] = 0xFFFF;
       }
     }
   }
+}
+
+int max(int a, int b)
+{
+  if (a > b) return a;
+  else return b;
+}
+
+int min(int a, int b)
+{
+  if (a > b) return b;
+  else return a;
 }
 
 // public
@@ -159,7 +174,8 @@ void draw_character(int x, int y, char *char_raster)
 void vga_draw_str(int x, int y, const char *text, ...)
 {
   int char_offset = 0;
-  char textBuf[64];
+  int y_offset = 0;
+  char textBuf[256];
   va_list arg;
   va_start(arg, text);
 
@@ -168,9 +184,14 @@ void vga_draw_str(int x, int y, const char *text, ...)
 
   for (int i = 0; i < strlen(textBuf); i++)
   {
-    if (text[i] >= 32 && text[i] <= 126)
+    if (text[i] == 0xA) // Handle newline character
     {
-      draw_character(x + char_offset, y, (char *) &font_rasters[textBuf[i] - 32]);
+      char_offset = 0;
+      y_offset += FONT_CHAR_HEIGHT;
+    }
+    else if (text[i] >= 0 && text[i] <= 128)
+    {
+      draw_character(x + char_offset, y + y_offset, (char *) &font_rasters[textBuf[i]]);
       char_offset += FONT_CHAR_WIDTH;
     }
   }
@@ -206,9 +227,104 @@ uint16_t vga_create_color(uint8_t red, uint8_t green, uint8_t blue)
   result |= (red >> 3);
   result |= (green >> 3) << 7;
   result |= (blue >> 3) << 12;
+  return result;
 }
 
 void vga_queue_draw(void (*draw_function)())
 {
   queued_draw_function = draw_function;
+}
+
+void vga_draw_line(Vec p1, Vec p2, uint16_t color)
+{
+  if ((int) p1.y == (int) p2.y)
+  {
+    int y = (int) p1.y;
+    int min = (int) fmin(p1.x, p2.x);
+    int max = (int) fmax(p1.x, p2.x);
+    for (int i = min; i <= max; i++)
+    {
+      framebuffer[y * FB_WIDTH + i] = color;
+    }
+  }
+  else if ((int) p1.x == (int) p2.x)
+  {
+    int x = (int) p1.x;
+    int min = (int) fmin(p1.y, p2.y);
+    int max = (int) fmax(p1.y, p2.y);
+    for (int i = min; i <= max; i++)
+    {
+      framebuffer[i * FB_WIDTH + x] = color;
+    }
+  }
+  else
+  {
+    // http://members.chello.at/easyfilter/bresenham.html
+    int x0 = (int) p1.x, y0 = (int) p1.y;
+    int x1 = (int) p2.x, y1 = (int) p2.y;
+    int dx = abs((int) (x1 - x0)), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs((int) (y1 - y0)), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy, e2;
+
+    for (;;)
+    {
+      framebuffer[y0 * FB_WIDTH + x0] = color;
+      if (x0 == x1 && y0 == y1) break;
+      e2 = 2 * err;
+      if (e2 >= dy) {err += dy; x0 += sx;}
+      if (e2 <= dx) {err += dx; y0 += sy;}
+    }
+  }
+}
+
+void vga_draw_triangle(Vec p1, Vec p2, Vec p3, uint16_t color)
+{
+  int max_x = max(p1.x, max(p2.x, p3.x));
+  int max_y = max(p1.y, max(p2.y, p3.y));
+  int min_x = min(p1.x, min(p2.x, p3.x));
+  int min_y = min(p1.y, min(p2.y, p3.y));
+  int bb_width = max_x - min_x;
+  int bb_height = max_y - min_y;
+
+  int A01 = p1.y - p2.y, B01 = p2.x - p1.x;
+  int A12 = p2.y - p3.y, B12 = p3.x - p2.x;
+  int A20 = p3.y - p1.y, B20 = p1.x - p3.x;
+
+  int edge_function(const Vec *a, const Vec *b, const Vec *c)
+  {
+    return (b->x-a->x)*(c->y-a->y) - (b->y-a->y)*(c->x-a->x);
+  }
+
+  Vec p = vec2_new(min_x, min_y);
+
+  int w0_row = edge_function(&p2, &p3, &p);
+  int w1_row = edge_function(&p3, &p1, &p);
+  int w2_row = edge_function(&p1, &p2, &p);
+
+  for (p.y = min_y; p.y <= max_y; p.y++)
+  {
+    int w0 = w0_row;
+    int w1 = w1_row;
+    int w2 = w2_row;
+    for (p.x = min_x; p.x <= max_x; p.x++)
+    {
+      if (w0 >= 0 && w1 >= 0 && w2 >= 0)
+      {
+        framebuffer[p.y * FB_WIDTH + p.x] = color;
+      }
+
+      w0 += A12;
+      w1 += A20;
+      w2 += A01;
+    }
+    w0_row += B12;
+    w1_row += B20;
+    w2_row += B01;
+  }
+
+  // vga_draw_line(p1, p2, color);
+  // vga_draw_line(p2, p3, color);
+  // vga_draw_line(p3, p1, color);
+
+
 }

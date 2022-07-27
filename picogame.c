@@ -1,3 +1,4 @@
+#include "3d.h"
 #include "vga.h"
 
 #include <stdio.h>
@@ -23,14 +24,11 @@ float time = 0.0;
 void draw_func()
 {
   time += 0.1;
-
-  int box_x = FB_WIDTH / 2 + ( sinf(time) * 50) - 25;
-  int box_y = FB_HEIGHT / 2 + (cosf(time) * 50) - 25;
-
+  if (time > M_PI * 2) time = 0;
   vga_clear();
-  draw_box(box_x, box_y, 50, 50);
-  vga_draw_str(0,0,"x: %d", box_x);
-  vga_draw_str(0,13,"y: %d", box_y);
+  vga_draw_str(0, 0,"Hello World!");
+  vga_draw_line(vec2_new(FB_WIDTH / 2, FB_HEIGHT / 2), vec2_new(sinf(time) * 50 + (FB_WIDTH / 2), cosf(time) * 50 + (FB_HEIGHT / 2)), vga_create_color(128, 128, 255));
+  vga_draw_triangle(vec2_new(20, 20), vec2_new(40, 15),  vec2_new(16, 60), 0xFFFF);
 }
 
 int main()
