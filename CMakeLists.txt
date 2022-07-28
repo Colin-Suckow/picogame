@@ -26,7 +26,7 @@ pico_generate_pio_header(picogame ${CMAKE_CURRENT_LIST_DIR}/hsync.pio)
 pico_generate_pio_header(picogame ${CMAKE_CURRENT_LIST_DIR}/vsync.pio)
 pico_generate_pio_header(picogame ${CMAKE_CURRENT_LIST_DIR}/rgb.pio)
 
-target_link_libraries(picogame pico_stdlib hardware_pio hardware_dma)
+target_link_libraries(picogame pico_stdlib hardware_pio hardware_dma pico_multicore)
 pico_enable_stdio_usb(picogame 1)
 pico_enable_stdio_uart(picogame 0)
 pico_add_extra_outputs(picogame)

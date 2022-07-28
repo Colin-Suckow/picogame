@@ -16,10 +16,14 @@
 #include "rgb.pio.h"
 
 #define DMA_DATA_CHANNEL 0
-#define DMA_CONTROL_CHANNEL 1
 
-uint16_t framebuffer[FB_SIZE] = {0};
+#define FB_SIZE FB_WIDTH * FB_HEIGHT
 
+#define WORKING_FB_OFFSET (!active_framebuffer * FB_SIZE)
+#define DRAWING_FB_OFFSET (active_framebuffer * FB_SIZE)
+
+uint8_t framebuffer[FB_SIZE * 2] = {0}; // Store both framebuffers in one array
+uint8_t active_framebuffer = 0;
 
 typedef struct
 {
@@ -27,41 +31,39 @@ typedef struct
   uint sm;
 } smState;
 
-struct control_block {uint32_t len; uint16_t *data;};
-
-struct control_block scanline_blocks[481];
-
-void (*queued_draw_function)();
-
 // PRIVATE
 
-void fill_scanline_blocks()
+void scanline_handler()
 {
-  for (int i = 0; i < 480; i++)
+  static int current_scanline = 0;
+  static uint16_t active_scanline[FB_WIDTH] = {0};
+  static uint16_t next_scanline[FB_WIDTH] = {0};
+
+  // Copy next scanline to current
+  for (int i = 0; i < FB_WIDTH; i++)
   {
-    scanline_blocks[i].len = 320;
-    scanline_blocks[i].data = &framebuffer[320 * (i/2)];
+    active_scanline[i] = next_scanline[i];
   }
-  scanline_blocks[480].len = 0;
-  scanline_blocks[480].data = NULL;
-}
 
-void frame_done_handler()
-{
-  dma_channel_set_read_addr(1, &scanline_blocks[0], true);
+  dma_channel_set_read_addr(DMA_DATA_CHANNEL, &active_scanline[0], false);
+  dma_channel_set_trans_count(DMA_DATA_CHANNEL, FB_WIDTH, true);
   dma_hw->ints0 = 1u;
-}
+  if (++current_scanline >= 480) current_scanline = 0;
 
-void vsync_handler()
-{
-  if (pio0_hw->irq & 2)
+  // Unpack next scanline
+
+  int scanline_start = (current_scanline / 2) * FB_WIDTH;
+
+  for (int i = 0; i < FB_WIDTH; i++)
   {
-    if (queued_draw_function != NULL)
-    {
-      queued_draw_function();
-      queued_draw_function = NULL;
-    }
-    hw_set_bits(&pio0->irq, 2u);
+    uint8_t pixel = framebuffer[DRAWING_FB_OFFSET + scanline_start + i];
+    uint16_t unpacked_pixel = 0;
+
+    unpacked_pixel |= (pixel & 0x7) << 2; // red
+    unpacked_pixel |= (pixel & 0x38) << 5; // green
+    unpacked_pixel |= (pixel & 0xC0) << 8; // blue
+
+    next_scanline[i] = unpacked_pixel;
   }
 }
 
@@ -83,11 +85,6 @@ void init_pio_vsync(smState *state)
   uint sm = 1;
   vsync_program_init(pio, sm, offset, 17);
   pio_sm_put_blocking(pio, sm, 479); // Visible
-
-  //Set up irq
-  irq_set_exclusive_handler(PIO0_IRQ_0, vsync_handler);
-  irq_set_enabled(PIO0_IRQ_0, true);
-  pio0_hw->inte0 = PIO_IRQ0_INTE_SM1_BITS;
 
   state->pio = pio;
   state->sm = sm;
@@ -111,36 +108,18 @@ void configure_dma(smState *rgbState)
   channel_config_set_read_increment(&data_config, true);
   channel_config_set_write_increment(&data_config, false);
   channel_config_set_dreq(&data_config, DREQ_PIO0_TX2);
-  channel_config_set_chain_to(&data_config, DMA_CONTROL_CHANNEL);
-  channel_config_set_irq_quiet(&data_config, true);
 
   dma_channel_configure(
       0,
       &data_config,
       &pio0->txf[rgbState->sm],
-      NULL,            // Read addr and len will be set by the control blocks
+      NULL,            // Read addr and len will be set by the scanline handler
       0,
       false
   );
   dma_channel_set_irq0_enabled(DMA_DATA_CHANNEL, true);
-  irq_set_exclusive_handler(DMA_IRQ_0, frame_done_handler);
+  irq_set_exclusive_handler(DMA_IRQ_0, scanline_handler);
   irq_set_enabled(DMA_IRQ_0, true);
-
-  // Channel One, Control channel
-  dma_channel_config control_config = dma_channel_get_default_config(DMA_CONTROL_CHANNEL);
-  channel_config_set_transfer_data_size(&control_config, DMA_SIZE_32);
-  channel_config_set_read_increment(&control_config, true);            
-  channel_config_set_write_increment(&control_config, true);
-  channel_config_set_ring(&control_config, true, 3);            
-  
-  dma_channel_configure(
-      DMA_CONTROL_CHANNEL,
-      &control_config,
-      &dma_hw->ch[DMA_DATA_CHANNEL].al3_transfer_count, // Write to the data DMA channel registers
-      &scanline_blocks[0],                              // Start reading from the command block array
-      2,
-      false
-  );
 }
 
 void draw_character(int x, int y, char *char_raster)
@@ -151,7 +130,7 @@ void draw_character(int x, int y, char *char_raster)
     {
       if ((char_raster[line] >> (pixel)) & 1 == 1)
       {
-        framebuffer[(y + line) * FB_WIDTH + (x + pixel)] = 0xFFFF;
+        framebuffer[WORKING_FB_OFFSET + (y + line) * FB_WIDTH + (x + pixel)] = 0xFF;
       }
     }
   }
@@ -201,8 +180,6 @@ void vga_init()
 {
   smState vSyncState, hSyncState, rgbState;
   
-  fill_scanline_blocks();
-
   init_pio_vsync(&vSyncState);
   init_pio_hsync(&hSyncState);
   init_pio_rgb(&rgbState);
@@ -210,32 +187,36 @@ void vga_init()
   configure_dma(&rgbState);
 
   pio_enable_sm_mask_in_sync(pio0, ((1u << hSyncState.sm) | (1u << vSyncState.sm) | (1u << rgbState.sm)));
-  dma_start_channel_mask((1u << 1));
+  dma_start_channel_mask((1u << DMA_DATA_CHANNEL));
+}
+
+void vga_swap_buffer()
+{
+  active_framebuffer = !active_framebuffer;
 }
 
 void vga_clear()
 {
   for (int i = 0; i < FB_SIZE; i++)
   {
-    framebuffer[i] = 0;
+    framebuffer[WORKING_FB_OFFSET + i] = 0;
   }
 }
 
-uint16_t vga_create_color(uint8_t red, uint8_t green, uint8_t blue)
+uint8_t vga_create_color(uint8_t red, uint8_t green, uint8_t blue)
 {
-  uint16_t result = 0;
-  result |= (red >> 3);
-  result |= (green >> 3) << 7;
-  result |= (blue >> 3) << 12;
+  uint8_t result = 0;
+  result |= (red >> 5);
+  result |= (green >> 5) << 3;
+  result |= (blue >> 6) << 6;
   return result;
 }
 
 void vga_queue_draw(void (*draw_function)())
 {
-  queued_draw_function = draw_function;
 }
 
-void vga_draw_line(Vec p1, Vec p2, uint16_t color)
+void vga_draw_line(Vec p1, Vec p2, uint8_t color)
 {
   if ((int) p1.y == (int) p2.y)
   {
@@ -244,7 +225,7 @@ void vga_draw_line(Vec p1, Vec p2, uint16_t color)
     int max = (int) fmax(p1.x, p2.x);
     for (int i = min; i <= max; i++)
     {
-      framebuffer[y * FB_WIDTH + i] = color;
+      framebuffer[y * FB_WIDTH + i + WORKING_FB_OFFSET] = color;
     }
   }
   else if ((int) p1.x == (int) p2.x)
@@ -254,7 +235,7 @@ void vga_draw_line(Vec p1, Vec p2, uint16_t color)
     int max = (int) fmax(p1.y, p2.y);
     for (int i = min; i <= max; i++)
     {
-      framebuffer[i * FB_WIDTH + x] = color;
+      framebuffer[i * FB_WIDTH + x + WORKING_FB_OFFSET] = color;
     }
   }
   else
@@ -268,7 +249,7 @@ void vga_draw_line(Vec p1, Vec p2, uint16_t color)
 
     for (;;)
     {
-      framebuffer[y0 * FB_WIDTH + x0] = color;
+      framebuffer[y0 * FB_WIDTH + x0 + WORKING_FB_OFFSET] = color;
       if (x0 == x1 && y0 == y1) break;
       e2 = 2 * err;
       if (e2 >= dy) {err += dy; x0 += sx;}
@@ -277,7 +258,7 @@ void vga_draw_line(Vec p1, Vec p2, uint16_t color)
   }
 }
 
-void vga_draw_triangle(Vec p1, Vec p2, Vec p3, uint16_t color)
+void vga_draw_triangle(Vec p1, Vec p2, Vec p3, uint8_t color)
 {
   int max_x = max(p1.x, max(p2.x, p3.x));
   int max_y = max(p1.y, max(p2.y, p3.y));
@@ -310,7 +291,7 @@ void vga_draw_triangle(Vec p1, Vec p2, Vec p3, uint16_t color)
     {
       if (w0 >= 0 && w1 >= 0 && w2 >= 0)
       {
-        framebuffer[p.y * FB_WIDTH + p.x] = color;
+        framebuffer[p.y * FB_WIDTH + p.x + WORKING_FB_OFFSET] = color;
       }
 
       w0 += A12;
@@ -321,10 +302,4 @@ void vga_draw_triangle(Vec p1, Vec p2, Vec p3, uint16_t color)
     w1_row += B20;
     w2_row += B01;
   }
-
-  // vga_draw_line(p1, p2, color);
-  // vga_draw_line(p2, p3, color);
-  // vga_draw_line(p3, p1, color);
-
-
 }
